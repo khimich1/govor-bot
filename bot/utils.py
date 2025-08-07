@@ -103,3 +103,15 @@ def latex_to_codeblock(text: str) -> str:
     # заменить инлайн-формулы $ ... $
     text = re.sub(r'\$([^$]+)\$', _convert, text)
     return text
+
+def get_prepared_lecture(topic, idx):
+    """
+    Получает готовую лекцию по теме и номеру chunk'а из базы данных.
+    Возвращает текст лекции, либо None если такого нет.
+    """
+    import sqlite3
+    with sqlite3.connect("prepared_lectures.db") as conn:
+        c = conn.cursor()
+        c.execute("SELECT lecture FROM prepared_lectures WHERE topic=? AND chunk_idx=?", (topic, idx))
+        row = c.fetchone()
+        return row[0] if row else None

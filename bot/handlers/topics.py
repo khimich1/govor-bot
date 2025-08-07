@@ -1,10 +1,12 @@
 import os
-from bot.handlers.menu import main_kb
+import sqlite3
 from aiogram import Router, types
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
+from aiogram.enums import ParseMode
+from bot.handlers.menu import main_kb
 from bot.utils import (
     ALL_TOPICS, clean_html, user_topics, LEARNING_TOPICS,
     user_learning_state, TEXTBOOK_CONTENT, latex_to_codeblock
@@ -16,6 +18,18 @@ from bot.services.gpt_service import (
 from bot.services.spreadsheet import save_answer
 
 router = Router()
+
+# --- ДОБАВЛЕНА ФУНКЦИЯ ДЛЯ БЫСТРОГО ПОЛУЧЕНИЯ ЛЕКЦИИ ИЗ БАЗЫ ---
+def get_prepared_lecture(topic, idx):
+    """
+    Получает готовую лекцию из базы по теме и номеру chunk'а.
+    Возвращает текст лекции, либо None если не найдено.
+    """
+    with sqlite3.connect("prepared_lectures.db") as conn:
+        c = conn.cursor()
+        c.execute("SELECT lecture FROM prepared_lectures WHERE topic=? AND chunk_idx=?", (topic, idx))
+        row = c.fetchone()
+        return row[0] if row else None
 
 # --- Клавиатуры для обычных тем ---
 topics_kb = ReplyKeyboardMarkup(
@@ -67,18 +81,7 @@ async def back_to_menu(m: types.Message):
     await m.answer("Главное меню:", reply_markup=main_kb)
 
 # === 2. Курс по органике ===
-# --- Вариант 1: список тем обычной клавиатурой (раскомментируй если хочешь такой UX) ---
-#@router.message(lambda m: m.text == "🌱 Курс по органике")
-#async def show_learning_topics(m: types.Message):
-#    kb = ReplyKeyboardMarkup(
-#        keyboard=[
-#            [KeyboardButton(text=f"{i + 1}. {t}")] for i, t in enumerate(LEARNING_TOPICS)
-#        ] + [[KeyboardButton(text="⬅️ В меню")]],
-#        resize_keyboard=True
-#    )
-#    await m.answer("Выбери тему:", reply_markup=kb)
 
-# --- Вариант 2: интерактивный курс с chunk'ами и inline-кнопками (оставь если нужно обучение) ---
 @router.message(lambda m: m.text == "🌱 Курс по органике")
 async def on_learning_start(m: types.Message):
     buttons = [
@@ -102,9 +105,12 @@ async def on_topic_chosen(cb: types.CallbackQuery, bot):
     user_learning_state[cb.from_user.id] = {"topic": topic, "index": 0, "awaiting_question": False}
     await send_next_chunk(cb.from_user.id, bot)
 
+# --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
 async def send_next_chunk(user_id: int, bot):
-    from aiogram.enums import ParseMode
-    from bot.handlers.menu import main_kb
+    """
+    Показывает следующий chunk теории пользователю.
+    Теперь лекция берётся из базы (а не генерируется каждый раз через GPT)!
+    """
     st = user_learning_state.get(user_id)
     if not st:
         return
@@ -122,8 +128,17 @@ async def send_next_chunk(user_id: int, bot):
         )
         user_learning_state.pop(user_id, None)
         return
+
     header = f"Глава {chap_num}/{chap_total}, порция {idx+1}/{total}\n\n"
-    raw = await teach_material(chunks[idx])
+
+    # --- БЫЛО ---
+    # raw = await teach_material(chunks[idx])
+    # --- СТАЛО ---
+    raw = get_prepared_lecture(topic, idx)
+    if not raw:
+        await bot.send_message(user_id, "Лекция пока не подготовлена. Обратитесь к администратору.")
+        return
+
     formatted = latex_to_codeblock(raw)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -172,7 +187,6 @@ async def on_learning_ask(cb: types.CallbackQuery, bot):
 
 @router.callback_query(lambda c: c.data == "learn_stop")
 async def on_learning_stop(cb: types.CallbackQuery, bot):
-    from bot.handlers.menu import main_kb
     user_learning_state.pop(cb.from_user.id, None)
     await bot.send_message(
         cb.from_user.id,
@@ -190,6 +204,7 @@ async def to_chapters(cb: types.CallbackQuery, bot):
     user_learning_state.pop(cb.from_user.id, None)
     await bot.send_message(cb.from_user.id, "Выберите главу для курса по органике:", reply_markup=kb)
     await bot.send_message(cb.from_user.id, "Можешь в любой момент вернуться в меню:", reply_markup=choose_chapter_kb)
+
 
 # === Работа с голосом и текстом для любого режима ===
 @router.message(lambda m: m.voice is not None)
