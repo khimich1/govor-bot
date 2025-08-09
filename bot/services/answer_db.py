@@ -1,7 +1,8 @@
 import sqlite3
 from datetime import datetime
 
-DB_FILE = "test_answers.db"  # Имя файла с базой данных
+DB_FILE = "../shared/test_answers.db"
+  # Имя файла с базой данных
 
 # 1. Создаём таблицу ответов (вызывается один раз при запуске)
 def init_db():
